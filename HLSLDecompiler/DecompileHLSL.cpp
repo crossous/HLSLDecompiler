@@ -538,13 +538,18 @@ public:
 		{
 			NextLine(c, pos, size);
 		}
+
+		bool noOutput = false;
 		// Read list.
 		while (pos < size)
 		{
 			char name[256], mask[16], format[16], format2[16];
 			int index, slot; format[0] = 0; mask[0] = 0;
 			if (!strncmp(c + pos, "// no Output", strlen("// no Output")))
+			{
+				noOutput = true;
 				break;
+			}
 
 			// Name                 Index   Mask Register SysValue  Format   Used
 			// -------------------- ----- ------ -------- -------- ------- ------
@@ -619,9 +624,11 @@ public:
 			if (!strncmp(c + pos, "//\n", 3) || !strncmp(c + pos, "//\r", 3))
 				break;
 		}
+		mOutput.pop_back();
 		// Write footer.
-		mOutput.pop_back();
-		mOutput.pop_back();
+		if (!noOutput)
+			mOutput.pop_back();
+		
 		const char *mainFooter = ")\n{\n";
 		mOutput.insert(mOutput.end(), mainFooter, mainFooter + strlen(mainFooter));
 	}
@@ -3945,6 +3952,138 @@ public:
 		}
 	}
 
+	std::string process_uav_typed_term(char* term, unsigned int effective_component, std::string format)
+	{
+		char buffer[128];
+		
+		bool is_literal = term[0] == 'l';
+
+		std::string res;
+		if (is_literal)
+		{
+			bool is_float = format.find("float") != std::string::npos;
+			// std::string match_symbol = is_float ? "%.9g" : "%d";
+			// std::string match_str = "l(";
+
+			sprintf(buffer, "%s%d", format.c_str(), effective_component);
+			std::string format_component = effective_component > 1 ? buffer : format;
+
+			res = term;
+			res.replace(0, 1, format_component);
+		}
+		else
+		{
+			char* last_point = strrchr(term, '.');
+
+			if (last_point == NULL)
+			{
+				logDecompileError("Error parsing " + string(term) + ", not found '.'");
+				return "";
+			}
+
+			res = term;
+			res = res.substr(0, (last_point - term) + 1 + effective_component);
+		}
+
+		return res;
+	}
+	
+	// uav texture
+	void parse_store_typed(Shader *shader, const char *c, size_t &pos, size_t &size, Instruction *instr)
+	{
+		//std::string translated[4];
+		//char buffer[512];
+		//bool combined;
+		//
+		//// store_uav_typed u0.xyzw, r0.xyzz, r1.xyzx
+
+		char buffer[128];
+		char *dst = op1, *idx = op2, *src = op3;
+		Operand dst0 = instr->asOperands[0];
+		Operand src0 = instr->asOperands[3];
+
+		char* dst_point_ptr = strrchr(op1, '.');
+		char* dst_end_ptr = strrchr(op1, ',');
+		std::string dst_swiz = std::string(dst_point_ptr + 1, dst_end_ptr);
+
+		std::string dst_name = std::string(dst, dst_point_ptr);
+
+		auto type_pair = mUAVType.find(dst0.ui32RegisterNumber);
+		if (type_pair == mUAVType.end())
+		{
+			logDecompileError(string(statement) + " uav binding not found");
+			ASMLineOut(c, pos, size);
+			return;
+		}
+		
+		std::string type = type_pair->second;
+
+		char const* dim_right = strrchr(type.c_str(), '<');
+		int prefix_length = static_cast<int>(strlen("RWTexture"));
+		int dim_length = dim_right == NULL ? static_cast<int>(type.length()) - prefix_length : (static_cast<int>(dim_right - type.c_str()) - prefix_length);
+
+		char const* format_right = strrchr(type.c_str(), '>');
+
+		int component_count = *(format_right-1) >= '2' || *(format_right-1) <= '4' ? *(format_right-1) - '0' : 1;
+		int format_length = static_cast<int>(format_right - dim_right) - (component_count > 1 ? 1 : 0);
+
+		std::string dim = std::string(type.begin() + prefix_length, type.begin() + prefix_length + dim_length);
+
+		std::string format = std::string(dim_right + 1, dim_right + 1 + format_length);
+		
+		//sscanf_s(type.c_str(), "RWTexture%s<%s%d>", dim, dim_length + 1, format, format_length + 1, &component_count);
+
+		int index_count = 0;		
+		if (dim == "2D")
+			index_count = 2;
+		else if (dim == "2DArray")
+			index_count = 3;
+		else if (dim == "3D")
+			index_count = 3;
+		else
+		{
+			logDecompileError("unknow uav format " + type);
+			return;
+		}
+
+		std::string idx_term = process_uav_typed_term(idx, index_count, "uint");
+		std::string src_term = process_uav_typed_term(src, component_count, format);
+
+		if (idx_term != "" && src_term != "")
+		{
+			sprintf_s(buffer, sizeof(buffer),  "  %s[%s].%s = %s;\n", dst_name.c_str(), idx_term.c_str(), dst_swiz.c_str(), src_term.c_str());
+			mOutput.insert(mOutput.end(), buffer, buffer + strlen(buffer));
+		}
+		
+		//
+		//remapTarget(dst);
+		//int swiz_offsets[4] = {0, 4, 8, 12};
+		//
+		//if (translate_structured_var(shader, c, pos, size, instr, translated, &combined, idx, off, dst, &dst0, swiz_offsets)) {
+		//	if (combined) {
+		//		applySwizzle(dst, src);
+		//		sprintf(buffer, "  %s = %s;\n", translated[0].c_str(), ci(src).c_str());
+		//		appendOutput(buffer);
+		//	} else {
+		//		for (int component = 0; component < 4; component++) {
+		//			if (!(dst0.ui32CompMask & (1 << component)))
+		//				continue;
+		//
+		//			strcpy(op5, src); fixImm(op5, src0);
+		//			switch (component) {
+		//			case 0: applySwizzle(".x", op5); break;
+		//			case 1: applySwizzle(".y", op5); break;
+		//			case 2: applySwizzle(".z", op5); break;
+		//			case 3: applySwizzle(".w", op5); break;
+		//			}
+		//
+		//			sprintf(buffer, "  %s = %s;\n", translated[component].c_str(), ci(op5).c_str());
+		//			appendOutput(buffer);
+		//		}
+		//	}
+		//}
+	}
+	
 	//dx9
 	//get component from Instruction
 	string GetComponentStrFromInstruction(Instruction * instr, int opIndex)
@@ -4103,7 +4242,7 @@ public:
 			//LogDebug("parsing statement %s with args %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s\n", statement,
 			//	op1, op2, op3, op4, op5, op6, op7, op8, op9, op10, op11, op12, op13, op14, op15);
 			//
-
+			
 			// Some shaders seen in World of Diving contain multiple shader programs.
 			// Ignore any instructions from old shader models that we do not handle to
 			// avoid crashes.
@@ -4347,22 +4486,50 @@ public:
 					}
 				}
 			}
-			else if (!strcmp(statement, "dcl_resource_texture2darray"))	// dcl_resource_texture2darray (float,float,float,float) t0
+			else if (!strcmp(statement, "dcl_resource_texture2darray") || !strcmp(statement, "dcl_uav_typed_texture2darray"))	// dcl_resource_texture2darray (float,float,float,float) t0
 			{
-				if (op2[0] == 't')
+				bool uav = statement[4] = 'u';
+				char prefix = uav ? 'u' : 't';
+				
+				int bufIndex = 0;
+				if (sscanf_s(&op2[1], "%d", &bufIndex) != 1)
 				{
-					int bufIndex = 0;
-					if (sscanf_s(op2 + 1, "%d", &bufIndex) != 1)
-					{
-						logDecompileError("Error parsing texture2darray register index: " + string(op2));
-						return;
-					}
+					logDecompileError("Error parsing texture2darray register index: " + string(op2));
+				}
+				
+				if (!uav)
+				{
 					// Create if not existing.   e.g. if no ResourceBinding section in ASM.
 					map<int, string>::iterator i = mTextureNames.find(bufIndex);
 					if (i == mTextureNames.end())
 					{
 						CreateRawFormat("Texture2DArray", bufIndex);
 					}
+				}
+				else
+				{
+					char format[16];
+					sscanf_s(op1, "(%[^,]", format, static_cast<unsigned int>(sizeof(format)));
+					int splitCount = 0;
+
+					char* point = op1;
+					while (*point != '\0' && point - op1 <= sizeof(op1) && splitCount < 4)
+					{
+						if (*point == ',')
+							splitCount++;
+						point++;
+					}
+					int count = splitCount + 1;
+
+					sprintf(buffer, "RWTexture2DArray<%s%d> u%d : register(u%d);\n\n", format, count, bufIndex, bufIndex);
+					mOutput.insert(mOutput.begin(), buffer, buffer + strlen(buffer));
+					mCodeStartPos += strlen(buffer);
+
+					sprintf(buffer, "u%d", bufIndex);
+					mUAVNames[bufIndex] = buffer;
+
+					sprintf(buffer, "RWTexture2DArray<%s%d>", format, count);
+					mUAVType[bufIndex] = buffer;
 				}
 			}
 			else if (!strncmp(statement, "dcl_resource_texture2dms", strlen("dcl_resource_texture2dms")))	// dcl_resource_texture2dms(8) (float,float,float,float) t4
@@ -4511,15 +4678,68 @@ public:
 			}
 			else if (!strcmp(statement, "dcl_input"))
 			{
+				char *main_ptr = strstr(mOutput.data(), "void main(");
+				while (*main_ptr != 0x0a && *main_ptr != ')') main_ptr++;
+				bool noSV = false;
+				if (*main_ptr != 0x0a)
+				{
+					mOutput.insert(mOutput.begin() + (main_ptr - mOutput.data()), 0x0a);
+					main_ptr = strstr(mOutput.data(), "void main(");//Re-search to prevent container resize
+					while (*main_ptr != 0x0a) main_ptr++;
+					noSV = true;
+				}
+				main_ptr++;
+
+				bool match = true;
+				
 				// Can have 'vCoverage' variable implicitly defined, 
 				// not in input signature when reflection is stripped.
 				if (!strcmp(op1, "vCoverage"))
-				{
-					char *pos = strstr(mOutput.data(), "void main(");
-					while (*pos != 0x0a) pos++; pos++;
 					sprintf(buffer, "  uint vCoverage : SV_Coverage,\n");
-					mOutput.insert(mOutput.begin() + (pos - mOutput.data()), buffer, buffer + strlen(buffer));
+				else if (!strncmp(op1, "vThreadID", strlen("vThreadID")))
+					sprintf(buffer, "  uint3 vThreadID : SV_DispatchThreadID,\n");
+				else if (!strncmp(op1, "vThreadGroupID", strlen("vThreadGroupID")))
+					sprintf(buffer, "  uint3 vThreadGroupID : SV_GroupID,\n");
+				else if (!strncmp(op1, "vThreadIDInGroup", strlen("vThreadIDInGroup")))
+					sprintf(buffer, "  uint3 vThreadIDInGroup : SV_GroupThreadID,\n");
+				else if (!strncmp(op1, "vThreadIDInGroupFlattened", strlen("vThreadIDInGroupFlattened")))
+					sprintf(buffer, "  uint vThreadIDInGroupFlattened : SV_GroupIndex,\n");
+				else
+				{
+					match = false;
+					sprintf(buffer, "// Needs manual fix for instruction:\n");
+					mOutput.insert(mOutput.end(), buffer, buffer + strlen(buffer));
+					sprintf(buffer, "// unknown dcl_: ");
+					mOutput.insert(mOutput.end(), buffer, buffer + strlen(buffer));
+					ASMLineOut(c, pos, size);
 				}
+
+				if (noSV && match)
+				{
+					char* comma_ptr = buffer + strlen(buffer) - 2;
+					*(comma_ptr) = '\n';
+					*(comma_ptr + 1) = '\0';
+				}
+
+				if (match)
+					mOutput.insert(mOutput.begin() + (main_ptr - mOutput.data()), buffer, buffer + strlen(buffer));
+			}
+			else if (!strcmp(statement, "dcl_thread_group"))//dcl_thread_group 8, 8, 1
+			{
+				unsigned int threadGroupXSize = op1[0] - '0';
+				unsigned int threadGroupYSize = op2[0] - '0';
+				unsigned int threadGroupZSize = op3[0] - '0';
+				
+				char *pos = strstr(mOutput.data(), "void main(");
+				if (pos == NULL)
+				{
+					logDecompileError("Error parsing dcl_thread_group, not found : \"void main(\"\n"
+					   "current output:" + std::string(mOutput.begin(), mOutput.end()));
+					return;
+				}
+				
+				sprintf(buffer, "[numthreads(%d, %d, %d)]\n", threadGroupXSize, threadGroupYSize, threadGroupZSize);
+				mOutput.insert(mOutput.begin() + (pos - mOutput.data()), buffer, buffer + strlen(buffer));
 			}
 			else if (!strcmp(statement, "dcl_temps"))
 			{
@@ -6358,6 +6578,10 @@ public:
 						// these are used in needed shaders.  That way we can hand edit the shader to make it usable, until 
 						// this is completed.
 					case OPCODE_STORE_UAV_TYPED:
+					{
+						parse_store_typed(shader, c, pos, size, instr);
+						break;
+					}
 					case OPCODE_LD_UAV_TYPED:
 					case OPCODE_LD_RAW:
 					case OPCODE_STORE_RAW:

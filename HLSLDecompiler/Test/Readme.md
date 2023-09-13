@@ -1,0 +1,1 @@
+you can get dxbc binary test file from renderdoc->Pipeline State Viewer->select shader stage->Save

@@ -56,5 +56,8 @@
     <ClCompile Include="generated-constants.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\D3D_Shaders\SignatureParser.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
 </Project>
