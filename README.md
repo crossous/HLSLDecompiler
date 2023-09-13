@@ -1,6 +1,8 @@
 ## HLSLDecompiler
 
-&emsp;&emsp;翻译dxbc到hlsl源码，可以单独使用编译出的exe，也可以集成到renderdoc着色器处理工具中反编译着色器，虽然几乎是逐行翻译，但因为是hlsl，可以做到编辑反编译后的hlsl源码，然后重编译着色器到dxbc，以在renderdoc查看修改效果。如果你没有源代码，这对你学习和逆向游戏渲染技术时非常有用。
+&emsp;&emsp;翻译dxbc到hlsl源码，可以单独使用编译出的exe，也可以集成到renderdoc着色器处理工具中反编译着色器。<br>
+&emsp;&emsp;虽然几乎是逐行翻译，但因为是hlsl源码，可以做到编辑反编译后的hlsl源码，然后重编译着色器到dxbc，这样可以在renderdoc查看修改效果。<br>
+&emsp;&emsp;如果你没有源代码，这将对你学习和逆向游戏渲染技术时非常有用。
 
 ### 如何集成到renderdoc
 
